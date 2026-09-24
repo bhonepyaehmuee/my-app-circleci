@@ -1,95 +1,42 @@
-version: 2.1
-
-executors:
-  java-executor:
-    docker:
-      - image: cimg/openjdk:21.0
-
-jobs:
-  build-test-deploy:
-    parameters:
-      service-dir:
-        type: string
-      gitops-file-name:
-        type: string
-      manifest-folder:
-        type: string
-    executor: java-executor
-    steps:
-      - checkout
-
-      # -------------------------------
-      # 1. Build & Test Spring Boot App
-      # -------------------------------
-      - run:
-          name: Build and Test << parameters.service-dir >>
-          command: |
-            cd << parameters.service-dir >>
-            mvn clean package -DskipTests
-
-      # -------------------------------
-      # 2. Enable Remote Docker Engine
-      # -------------------------------
-      - setup_remote_docker
-
-      # -------------------------------
-      # 3. Build & Push Docker Image
-      # -------------------------------
-      - run:
-          name: Build and Push Docker image for << parameters.service-dir >>
-          command: |
-            IMAGE_NAME="${DOCKERHUB_USERNAME}/<< parameters.gitops-file-name >>:${CIRCLE_SHA1}"
-            
-            echo "${DOCKERHUB_PASSWORD}" | docker login --username "${DOCKERHUB_USERNAME}" --password-stdin
-            
-            docker build \
-              --progress=plain \
-              -t "${IMAGE_NAME}" \
-              ./<< parameters.service-dir >>
-
-            docker push "${IMAGE_NAME}"
-
-      # -------------------------------
-      # 4. Update GitOps Manifest Repo
-      # -------------------------------
-      - run:
-          name: Update GitOps Repository Manifests
-          command: |
-            git clone https://${GITHUB_TOKEN}@github.com/bhonepyaehmuee/my-app-gitops.git gitops
-            cd gitops
-
-            TARGET_FILE="<< parameters.manifest-folder >>/<< parameters.gitops-file-name >>-deployment.yml"
-            NEW_IMAGE="${DOCKERHUB_USERNAME}/<< parameters.gitops-file-name >>:${CIRCLE_SHA1}"
-
-            echo "Updating ${TARGET_FILE} to ${NEW_IMAGE}..."
-
-            sed -i \
-              "s|image:.*|image: ${NEW_IMAGE}|" \
-              "${TARGET_FILE}"
-
-            git config user.name "CircleCI"
-            git config user.email "circleci@users.noreply.github.com"
-
-            git add "${TARGET_FILE}"
-
-            git commit -m "ci(<< parameters.gitops-file-name >>): update image tag to ${CIRCLE_SHA1}" || true
-            git push origin main
-
 workflows:
   build-and-deploy:
     jobs:
-      # Application Services (Updates files inside gitops repo apps/ folder)
+      # 1. Build and push Config Server FIRST
       - build-test-deploy:
+          name: deploy-config-server
+          service-dir: "configserver"
+          gitops-file-name: "config-server"
+          manifest-folder: "infrastructure"
+
+      # 2. Build and push Eureka Server SECOND (waits for Config Server)
+      - build-test-deploy:
+          name: deploy-eureka-server
+          service-dir: "eurekaserver"
+          gitops-file-name: "eureka-server"
+          manifest-folder: "infrastructure"
+          requires:
+            - deploy-config-server
+
+      # 3. Build remaining Application Microservices LAST (waits for Eureka)
+      - build-test-deploy:
+          name: deploy-<< matrix.gitops-file-name >>
           matrix:
             parameters:
               service-dir: ["apigateway", "categoryservice", "productservice"]
               gitops-file-name: ["api-gateway", "category-service", "product-service"]
               manifest-folder: ["apps"]
-
-      # Infrastructure Services (Updates files inside gitops repo infrastructure/ folder)
-      - build-test-deploy:
-          matrix:
-            parameters:
-              service-dir: ["configserver", "eurekaserver"]
-              gitops-file-name: ["config-server", "eureka-server"]
-              manifest-folder: ["infrastructure"]
+            exclude:
+              - service-dir: "apigateway"
+                gitops-file-name: "category-service"
+              - service-dir: "apigateway"
+                gitops-file-name: "product-service"
+              - service-dir: "categoryservice"
+                gitops-file-name: "api-gateway"
+              - service-dir: "categoryservice"
+                gitops-file-name: "product-service"
+              - service-dir: "productservice"
+                gitops-file-name: "api-gateway"
+              - service-dir: "productservice"
+                gitops-file-name: "category-service"
+          requires:
+            - deploy-eureka-server
