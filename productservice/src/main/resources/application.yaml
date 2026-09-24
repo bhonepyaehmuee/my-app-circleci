@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: product-service
+  config:
+    import: "optional:configserver:http://config-server:8888"
+
+server:
+  port: 8081
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka-server:8761/eureka/
+#
+service:
+  message: "Hello from Product Service Config on   GitHub!"

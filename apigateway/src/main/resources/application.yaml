@@ -1,0 +1,68 @@
+#spring:
+#  application:
+#    name: api-gateway
+#
+#  config:
+#    import: "optional:configserver:http://localhost:8888"
+#
+#  cloud:
+#    gateway:
+#      routes:
+#        - id: product-service
+#          uri: lb://PRODUCT-SERVICE
+#          predicates:
+#            - Path=/test-config
+#
+#        - id: category-service
+#          uri: lb://CATEGORY-SERVICE
+#          predicates:
+#            - Path=/message
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      routes:
+        - id: product-service
+          uri: http://product-service:8081
+          predicates:
+            - Path=/test-config
+
+        - id: category-service
+          uri: http://category-service:8082
+          predicates:
+            - Path=/message
+
+      discovery:
+        locator:
+          enabled: true
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka-server:8761/eureka/
+    fetch-registry: true
+    register-with-eureka: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+
+  endpoint:
+    health:
+      show-details: always
+    info:
+      enabled: true
+
+info:
+  app:
+    name: API Gateway
+    description: Spring Cloud Gateway
+    version: 1.0.0

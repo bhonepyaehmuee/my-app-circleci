@@ -1,0 +1,21 @@
+server:
+  port: 8888
+
+spring:
+  application:
+    name: configexercise
+
+  cloud:
+    config:
+      server:
+        git:
+          uri: https://github.com/bhonepyaehmuee/config-repo.git
+          cloneOnStart: true
+          defaultLabel: main
+          # If your repo is PRIVATE, uncomment below and use a GitHub Personal Access Token (PAT) as password
+          # username: your-github-username
+          # password: ghp_yourPersonalAccessTokenHere
+
+logging:
+  level:
+    org.springframework.cloud.config: DEBUG
