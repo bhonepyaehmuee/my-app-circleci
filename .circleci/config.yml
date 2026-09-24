@@ -1,3 +1,85 @@
+version: 2.1
+
+executors:
+  java-executor:
+    docker:
+      - image: cimg/openjdk:21.0
+
+# ==============================================================================
+# 1. JOBS SECTION (Defines WHAT gets executed for each service)
+# ==============================================================================
+jobs:
+  build-test-deploy:
+    parameters:
+      service-dir:
+        type: string
+      gitops-file-name:
+        type: string
+      manifest-folder:
+        type: string
+    executor: java-executor
+    steps:
+      - checkout
+
+      # Step 1: Build & Test Maven Service
+      - run:
+          name: Build and Test << parameters.service-dir >>
+          command: |
+            cd << parameters.service-dir >>
+            mvn clean package -DskipTests
+
+      # Step 2: Enable Remote Docker Engine
+      - setup_remote_docker
+
+      # Step 3: Build & Push Docker Image
+      - run:
+          name: Build and Push Docker image for << parameters.service-dir >>
+          command: |
+            IMAGE_NAME="${DOCKERHUB_USERNAME}/<< parameters.gitops-file-name >>:${CIRCLE_SHA1}"
+            
+            echo "${DOCKERHUB_PASSWORD}" | docker login --username "${DOCKERHUB_USERNAME}" --password-stdin
+            
+            docker build \
+              --progress=plain \
+              -t "${IMAGE_NAME}" \
+              ./<< parameters.service-dir >>
+
+            docker push "${IMAGE_NAME}"
+
+      # Step 4: Safely Update GitOps Manifest Repo with Retry Loop
+      - run:
+          name: Update GitOps Repository Manifests
+          command: |
+            git clone https://${GITHUB_TOKEN}@github.com/bhonepyaehmuee/my-app-gitops.git gitops
+            cd gitops
+
+            TARGET_FILE="<< parameters.manifest-folder >>/<< parameters.gitops-file-name >>-deployment.yml"
+            NEW_IMAGE="${DOCKERHUB_USERNAME}/<< parameters.gitops-file-name >>:${CIRCLE_SHA1}"
+
+            echo "Updating ${TARGET_FILE} image tag to ${NEW_IMAGE}..."
+
+            sed -i "s|image:.*|image: ${NEW_IMAGE}|" "${TARGET_FILE}"
+
+            git config user.name "CircleCI"
+            git config user.email "circleci@users.noreply.github.com"
+
+            git add "${TARGET_FILE}"
+
+            if git commit -m "ci(<< parameters.gitops-file-name >>): update image tag to ${CIRCLE_SHA1}"; then
+              n=0
+              until [ "$n" -ge 5 ]
+              do
+                 git pull --rebase origin main && git push origin main && break
+                 n=$((n+1))
+                 sleep 2
+              done
+            else
+              echo "No manifest changes detected; skipping git push."
+            fi
+
+# ==============================================================================
+# 2. WORKFLOWS SECTION (Defines the ORDER of execution)
+# ==============================================================================
 workflows:
   build-and-deploy:
     jobs:
@@ -20,6 +102,8 @@ workflows:
       # 3. Build remaining Application Microservices LAST (waits for Eureka)
       - build-test-deploy:
           name: deploy-<< matrix.gitops-file-name >>
+          requires:
+            - deploy-eureka-server
           matrix:
             parameters:
               service-dir: ["apigateway", "categoryservice", "productservice"]
@@ -38,5 +122,3 @@ workflows:
                 gitops-file-name: "api-gateway"
               - service-dir: "productservice"
                 gitops-file-name: "category-service"
-          requires:
-            - deploy-eureka-server
